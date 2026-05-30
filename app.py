@@ -28,7 +28,7 @@ st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Sans:wght@300;400;500&display=swap');
 html, body, [class*="css"] { font-family: 'DM Sans', sans-serif; }
-.stApp { background: #0a0a0a; color: #f0ede6; }
+.stApp { background: #f5f0e8; color: #1a1a1a; }
 #MainMenu, footer, header { visibility: hidden; }
 .block-container { padding-top: 2rem; max-width: 720px; }
 .hero { text-align: center; padding: 2.5rem 0 1.5rem; }
