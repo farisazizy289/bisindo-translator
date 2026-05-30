@@ -22,8 +22,8 @@ Lebih dari **2.5 juta penyandang disabilitas pendengaran** di Indonesia mengguna
 ## ✨ Fitur
 
 - 📸 **Upload Foto** — upload gambar gestur tangan untuk dianalisis
-- 🎥 **Webcam Real-time** — deteksi gestur langsung dari kamera
-- ⏱️ **Timer** — countdown sebelum capture untuk gestur 2 tangan
+- 🎥 **Webcam Real-time** — deteksi gestur langsung dari kamera dengan auto-capture
+- ⏱️ **Timer Auto-Capture** — pilih delay 0/3/5/10 detik, kamera tetap live selama countdown sehingga user bisa menyesuaikan pose (sangat berguna untuk gestur 2 tangan)
 - ✋ **Visualisasi Landmark** — tampilan 21 titik tangan yang terdeteksi
 - 📝 **Builder Kalimat** — susun huruf menjadi kata/kalimat
 - ⚠️ **Confidence Threshold** — peringatan jika gestur tidak dikenali dengan yakin
@@ -79,7 +79,7 @@ Prediksi Huruf BISINDO A–Z
 | T, K, Q, N | ~86% | D | 71% |
 | A, P, E, M | ~82% | B | 38%* |
 
-> *B lebih rendah karena gesturnya melibatkan 2 tangan — model saat ini hanya memproses 1 tangan.
+> *B lebih rendah karena gesturnya melibatkan 2 tangan — fitur timer auto-capture dirancang khusus untuk membantu user menyiapkan pose 2 tangan sebelum shutter otomatis aktif.
 
 ---
 
@@ -87,9 +87,10 @@ Prediksi Huruf BISINDO A–Z
 
 ```
 bisindo-translator/
-├── app.py               # Streamlit web application
-├── requirements.txt     # Python dependencies
-└── README.md            # Dokumentasi ini
+├── app.py                              # Streamlit web application
+├── requirements.txt                    # Python dependencies
+├── BISINDO_SignLanguage_Translator.ipynb  # Training notebook (Kaggle)
+└── README.md                           # Dokumentasi ini
 ```
 
 > **Model files** (`bisindo_model.keras`, `bisindo_assets.json`, `hand_landmarker.task`)
@@ -105,7 +106,7 @@ bisindo-translator/
 ```bash
 # Clone repo
 git clone https://github.com/farisazizy289/bisindo-translator.git
-cd bisindo-sign-language-translator
+cd bisindo-translator
 
 # Install dependencies
 pip install -r requirements.txt
@@ -115,7 +116,7 @@ pip install opencv-python   # pakai ini untuk lokal (bukan headless)
 streamlit run app.py
 ```
 
-> Saat pertama kali dijalankan, app akan otomatis download model dari Google Drive (~5MB).
+> Saat pertama kali dijalankan, app akan otomatis download model dari Google Drive.
 
 ### Streamlit Cloud
 
@@ -124,6 +125,26 @@ streamlit run app.py
 3. Klik **"New app"**
 4. Pilih repo → set **Main file path: `app.py`**
 5. Klik **"Deploy"**
+
+> Streamlit Cloud otomatis membaca `requirements.txt` dan menginstall semua dependencies.
+
+---
+
+## 📦 Dependencies
+
+```txt
+streamlit
+numpy
+opencv-python-headless
+mediapipe
+tensorflow
+gdown
+Pillow
+av
+```
+
+> Gunakan `opencv-python-headless` untuk deployment di server/cloud (tidak butuh display server).
+> Untuk development lokal, ganti dengan `opencv-python`.
 
 ---
 
@@ -157,6 +178,29 @@ Notebook lengkap: [`BISINDO_SignLanguage_Translator.ipynb`](./BISINDO_SignLangua
 
 ---
 
+## 🎥 Cara Kerja Webcam Timer
+
+Flow timer auto-capture di mode webcam:
+
+```
+User pilih timer (0 / 3 / 5 / 10 detik)
+        ↓
+Klik "Mulai Timer" — kamera langsung aktif & terlihat
+        ↓
+Countdown berjalan di overlay atas kamera
+(user menyiapkan / menyesuaikan pose selama countdown)
+        ↓
+Countdown habis → shutter otomatis aktif
+        ↓
+Foto diproses oleh MediaPipe + LSTM
+```
+
+> Implementasi menggunakan `components.html` dengan JavaScript yang mengontrol
+> kamera, countdown overlay, dan auto-trigger tombol shutter `st.camera_input`
+> secara programatik — tanpa dependency tambahan selain Streamlit native.
+
+---
+
 ## ⚠️ Limitasi & Etika
 
 - Model hanya mencakup abjad A–Z, belum termasuk angka 0–9 atau kata
@@ -171,7 +215,7 @@ Notebook lengkap: [`BISINDO_SignLanguage_Translator.ipynb`](./BISINDO_SignLangua
 ## 🔮 Pengembangan Selanjutnya
 
 - [ ] Tambah angka 0–9
-- [ ] Support gestur 2 tangan (perbaiki akurasi huruf B)
+- [ ] Support gestur 2 tangan secara native (perbaiki akurasi huruf B)
 - [ ] Perluas ke kata dan frasa umum BISINDO
 - [ ] Integrasi text-to-speech untuk output suara
 - [ ] Mobile app dengan Core ML (iOS/iPadOS)
