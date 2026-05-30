@@ -1,0 +1,10 @@
+{
+  "class_names": [
+    "A","B","C","D","E","F","G","H","I","J","K","L","M",
+    "N","O","P","Q","R","S","T","U","V","W","X","Y","Z"
+  ],
+  "confidence_threshold": 0.6,
+  "sequence_length": 10,
+  "num_landmarks": 21,
+  "feature_dim": 63
+}
