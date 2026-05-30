@@ -47,7 +47,6 @@ html, body, [class*="css"] { font-family: 'DM Sans', sans-serif; }
 .timer-overlay { background: rgba(10,10,10,0.95); border: 1px solid #f59e0b; border-radius: 20px; padding: 1.5rem; margin: 0.5rem 0; text-align: center; }
 .timer-count { font-family: 'Syne', sans-serif; font-size: 5rem; font-weight: 800; color: #f59e0b; line-height: 1; }
 .timer-label { font-size: 0.85rem; color: #888; margin-top: 0.3rem; }
-.timer-go { font-family: 'Syne', sans-serif; font-size: 2rem; font-weight: 800; color: #22c55e; }
 .history-strip { display: flex; gap: 0.5rem; flex-wrap: wrap; padding: 1rem; background: #111; border: 1px solid #1e1e1e; border-radius: 12px; margin-top: 1rem; min-height: 56px; align-items: center; }
 .history-char { font-family: 'Syne', sans-serif; font-size: 1.5rem; font-weight: 700; color: #7dd3fc; background: #0d1a24; padding: 4px 14px; border-radius: 8px; }
 .tip-card { background: #0d1a24; border: 1px solid #1e3a5f; border-radius: 12px; padding: 1rem 1.5rem; margin-bottom: 1rem; font-size: 0.85rem; color: #7dd3fc; line-height: 1.6; }
@@ -109,9 +108,8 @@ def load_assets():
     with open("bisindo_assets.json", "r") as f:
         return json.load(f)
 
-# ── Image helper — encode ke JPEG bytes, paling aman untuk st.image ──
+# ── Image helper ──────────────────────────────────────────────
 def show_image(arr: np.ndarray, caption: str = ""):
-    """Tampilkan numpy RGB array via JPEG bytes — tidak ada TypeError."""
     pil = Image.fromarray(np.ascontiguousarray(arr, dtype=np.uint8))
     buf = io.BytesIO()
     pil.save(buf, format="JPEG", quality=92)
@@ -204,15 +202,13 @@ def render_result(result: dict):
 
 def process_image(img_rgb: np.ndarray, model, class_names: list, hand_detector):
     img_rgb = np.ascontiguousarray(img_rgb, dtype=np.uint8)
-
     with st.spinner("Mendeteksi tangan..."):
         try:
             landmarks, hand_lm = extract_landmarks(img_rgb, hand_detector)
         except Exception as e:
-            st.error(f"Error deteksi landmark: {e}")
+            st.error(f"Error deteksi: {e}")
             show_image(img_rgb)
             return
-
     if hand_lm is not None:
         try:
             annotated = draw_landmarks(img_rgb, hand_lm)
@@ -236,7 +232,6 @@ def process_image(img_rgb: np.ndarray, model, class_names: list, hand_detector):
             • Pencahayaan cukup dari depan
             </span>
         </div>""", unsafe_allow_html=True)
-
     if landmarks is not None:
         try:
             lm_norm  = normalize_landmarks(landmarks)
@@ -250,34 +245,9 @@ def process_image(img_rgb: np.ndarray, model, class_names: list, hand_detector):
         except Exception as e:
             st.error(f"Error prediksi: {e}")
 
-def inject_auto_capture():
-    components.html("""
-    <script>
-    (function() {
-        function tryClick(attempts) {
-            var docs = [window.parent.document, window.document];
-            for (var d = 0; d < docs.length; d++) {
-                var btns = docs[d].querySelectorAll('button');
-                for (var i = 0; i < btns.length; i++) {
-                    var btn = btns[i];
-                    var label = (btn.getAttribute('aria-label') || '').toLowerCase();
-                    if (label.includes('take photo') || label.includes('ambil') ||
-                        btn.getAttribute('data-testid') === 'camera-input-take-photo') {
-                        btn.click(); return;
-                    }
-                }
-            }
-            if (attempts > 0) setTimeout(function() { tryClick(attempts - 1); }, 80);
-        }
-        setTimeout(function() { tryClick(25); }, 300);
-    })();
-    </script>
-    """, height=0)
-
 # ── Session state ─────────────────────────────────────────────
-for k, v in {'history':[],'timer_running':False,'timer_start':None,'timer_done':False}.items():
-    if k not in st.session_state:
-        st.session_state[k] = v
+if 'history' not in st.session_state:
+    st.session_state.history = []
 
 # ═════════════════════════════════════════════════════════════
 # UI
@@ -327,65 +297,60 @@ if mode == "📸 Upload Foto":
         process_image(img_rgb, model, CLASS_NAMES, hand_detector)
 
 # ══════════════════════════════════════════════════════════════
-# MODE 2 — Webcam
+# MODE 2 — Webcam Real-time
 # ══════════════════════════════════════════════════════════════
 else:
     st.markdown("""
     <div class="tip-card">
         💡 <strong>Tips:</strong>
         <span style="color:#888">
-        Latar polos · Cahaya dari depan · Tangan penuh di frame · Jarak 30–60cm ·
-        Gunakan <strong>Timer</strong> jika butuh waktu siapkan gestur 2 tangan
+        Latar polos · Cahaya dari depan · Tangan penuh di frame · Jarak 30–60cm
         </span>
-    </div>""", unsafe_allow_html=True)
+    </div>
+    """, unsafe_allow_html=True)
 
+    # ── Timer selector ────────────────────────────────────────
     timer_sec = st.selectbox(
-        "⏱️ Timer sebelum capture:",
+        "⏱️ Delay setelah klik Take Photo:",
         [0, 3, 5, 10],
-        format_func=lambda x: "Tanpa timer (manual)" if x == 0 else f"{x} detik",
+        format_func=lambda x: "Langsung proses" if x == 0 else f"Proses setelah {x} detik",
         key="timer_select"
     )
 
     if timer_sec > 0:
-        if st.button("⏱️ Mulai Timer", use_container_width=True):
-            st.session_state.timer_running = True
-            st.session_state.timer_start   = time.time()
-            st.session_state.timer_done    = False
-            st.rerun()
+        st.markdown(f"""
+        <div class="tip-card" style="border-color:#f59e0b; color:#f59e0b; background:#1a1200">
+            ⏱️ <strong>Mode Timer {timer_sec} detik aktif:</strong><br>
+            <span style="color:#888">
+            1. Klik <strong style="color:#f0ede6">Take Photo</strong> di bawah<br>
+            2. Countdown mulai — siapkan gestur tangan kamu<br>
+            3. Foto otomatis diproses setelah {timer_sec} detik
+            </span>
+        </div>
+        """, unsafe_allow_html=True)
 
-    timer_placeholder = st.empty()
+    # ── Camera input — selalu tampil ──────────────────────────
+    img_file = st.camera_input(
+        "Arahkan tangan ke kamera",
+        label_visibility="collapsed"
+    )
 
-    if st.session_state.timer_running and not st.session_state.timer_done:
-        elapsed   = time.time() - st.session_state.timer_start
-        remaining = timer_sec - int(elapsed)
-        if remaining > 0:
-            timer_placeholder.markdown(f"""
-            <div class="timer-overlay">
-                <div class="timer-count">{remaining}</div>
-                <div class="timer-label">Siapkan gestur tangan kamu...</div>
-            </div>""", unsafe_allow_html=True)
-            time.sleep(1)
-            st.rerun()
-        else:
-            st.session_state.timer_running = False
-            st.session_state.timer_done    = True
-
-    if st.session_state.timer_done:
-        timer_placeholder.markdown("""
-        <div class="timer-overlay" style="border-color:#22c55e">
-            <div class="timer-go">📸 AUTO-CAPTURE!</div>
-            <div class="timer-label" style="color:#22c55e">Mengambil foto secara otomatis...</div>
-        </div>""", unsafe_allow_html=True)
-
-    img_file = st.camera_input("Arahkan tangan ke kamera", label_visibility="collapsed")
-
-    if st.session_state.timer_done and img_file is None:
-        inject_auto_capture()
-
+    # ── Proses setelah foto diambil ───────────────────────────
     if img_file is not None:
-        if st.session_state.timer_done:
-            st.session_state.timer_done = False
-            timer_placeholder.empty()
+        # Countdown SETELAH foto diambil (bukan sebelum)
+        if timer_sec > 0:
+            timer_ph = st.empty()
+            for remaining in range(timer_sec, 0, -1):
+                timer_ph.markdown(f"""
+                <div class="timer-overlay">
+                    <div class="timer-count">{remaining}</div>
+                    <div class="timer-label">
+                        Siapkan gestur — diproses dalam {remaining} detik...
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+                time.sleep(1)
+            timer_ph.empty()
 
         img_pil = Image.open(img_file).convert('RGB')
         img_arr = np.array(img_pil, dtype=np.uint8)
