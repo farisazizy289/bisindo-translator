@@ -297,7 +297,7 @@ if mode == "📸 Upload Foto":
         process_image(img_rgb, model, CLASS_NAMES, hand_detector)
 
 # ══════════════════════════════════════════════════════════════
-# MODE 2 — Webcam Real-time
+# MODE 2 — Webcam Real-time  (BAGIAN YANG DIPERBAIKI)
 # ══════════════════════════════════════════════════════════════
 else:
     st.markdown("""
@@ -311,51 +311,93 @@ else:
 
     # ── Timer selector ────────────────────────────────────────
     timer_sec = st.selectbox(
-        "⏱️ Delay setelah klik Take Photo:",
+        "⏱️ Delay sebelum kamera aktif:",
         [0, 3, 5, 10],
-        format_func=lambda x: "Langsung proses" if x == 0 else f"Proses setelah {x} detik",
+        format_func=lambda x: "Langsung (tanpa timer)" if x == 0 else f"Timer {x} detik — siapkan pose dulu",
         key="timer_select"
     )
 
-    if timer_sec > 0:
+    # ── Session state untuk kontrol tampilan kamera ───────────
+    if 'show_camera' not in st.session_state:
+        st.session_state.show_camera = False
+    if 'timer_running' not in st.session_state:
+        st.session_state.timer_running = False
+
+    # ── Tombol mulai ──────────────────────────────────────────
+    if timer_sec == 0:
+        # Tanpa timer: langsung tampilkan kamera
+        st.session_state.show_camera = True
+    else:
+        col_btn, col_reset = st.columns([3, 1])
+        with col_btn:
+            if st.button("📸 Mulai Timer & Persiapkan Pose", use_container_width=True,
+                         type="primary"):
+                st.session_state.show_camera = False
+                st.session_state.timer_running = True
+                st.rerun()
+        with col_reset:
+            if st.button("🔄 Reset", use_container_width=True):
+                st.session_state.show_camera = False
+                st.session_state.timer_running = False
+                st.rerun()
+
+    # ── Jalankan countdown (sebelum kamera tampil) ────────────
+    if st.session_state.get('timer_running', False) and timer_sec > 0:
         st.markdown(f"""
-        <div class="tip-card" style="border-color:#f59e0b; color:#f59e0b; background:#1a1200">
-            ⏱️ <strong>Mode Timer {timer_sec} detik aktif:</strong><br>
-            <span style="color:#888">
-            1. Klik <strong style="color:#f0ede6">Take Photo</strong> di bawah<br>
-            2. Countdown mulai — siapkan gestur tangan kamu<br>
-            3. Foto otomatis diproses setelah {timer_sec} detik
+        <div class="tip-card" style="border-color:#f59e0b; color:#f59e0b;
+             background:#1a1200; text-align:center; padding:1rem 1.5rem;">
+            ⏱️ <strong>Siapkan pose tangan kamu!</strong><br>
+            <span style="color:#888; font-size:0.8rem">
+                Kamera akan aktif setelah countdown selesai
             </span>
         </div>
         """, unsafe_allow_html=True)
 
-    # ── Camera input — selalu tampil ──────────────────────────
-    img_file = st.camera_input(
-        "Arahkan tangan ke kamera",
-        label_visibility="collapsed"
-    )
-
-    # ── Proses setelah foto diambil ───────────────────────────
-    if img_file is not None:
-        # Countdown SETELAH foto diambil (bukan sebelum)
-        if timer_sec > 0:
-            timer_ph = st.empty()
-            for remaining in range(timer_sec, 0, -1):
-                timer_ph.markdown(f"""
-                <div class="timer-overlay">
-                    <div class="timer-count">{remaining}</div>
-                    <div class="timer-label">
-                        Siapkan gestur — diproses dalam {remaining} detik...
-                    </div>
+        timer_ph = st.empty()
+        for remaining in range(timer_sec, 0, -1):
+            timer_ph.markdown(f"""
+            <div class="timer-overlay">
+                <div class="timer-count">{remaining}</div>
+                <div class="timer-label">
+                    Siapkan gestur tangan — kamera aktif dalam {remaining} detik...
                 </div>
-                """, unsafe_allow_html=True)
-                time.sleep(1)
-            timer_ph.empty()
+            </div>
+            """, unsafe_allow_html=True)
+            time.sleep(1)
 
-        img_pil = Image.open(img_file).convert('RGB')
-        img_arr = np.array(img_pil, dtype=np.uint8)
-        img_rgb = np.ascontiguousarray(cv2.flip(img_arr, 1), dtype=np.uint8)
-        process_image(img_rgb, model, CLASS_NAMES, hand_detector)
+        timer_ph.empty()
+        st.session_state.timer_running = False
+        st.session_state.show_camera = True
+        st.rerun()
+
+    # ── Tampilkan kamera SETELAH countdown selesai ────────────
+    if st.session_state.show_camera:
+        if timer_sec > 0:
+            st.markdown("""
+            <div class="lm-card" style="text-align:center; margin-bottom:0.5rem;">
+                📸 <strong>Kamera aktif!</strong> · Pertahankan pose, lalu klik <em>Take Photo</em>
+            </div>
+            """, unsafe_allow_html=True)
+
+        img_file = st.camera_input(
+            "Arahkan tangan ke kamera",
+            label_visibility="collapsed"
+        )
+
+        if img_file is not None:
+            # Langsung proses — tidak ada delay lagi
+            img_pil = Image.open(img_file).convert('RGB')
+            img_arr = np.array(img_pil, dtype=np.uint8)
+            img_rgb = np.ascontiguousarray(cv2.flip(img_arr, 1), dtype=np.uint8)
+            process_image(img_rgb, model, CLASS_NAMES, hand_detector)
+
+            # Reset state agar bisa foto ulang dengan timer lagi
+            if timer_sec > 0:
+                st.markdown("<br>", unsafe_allow_html=True)
+                if st.button("🔁 Ambil foto baru (ulang timer)", use_container_width=True):
+                    st.session_state.show_camera = False
+                    st.session_state.timer_running = False
+                    st.rerun()
 
 # ══════════════════════════════════════════════════════════════
 # HISTORY
