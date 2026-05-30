@@ -13,6 +13,9 @@ import os
 import time
 import tensorflow as tf
 import gdown
+from streamlit_webrtc import webrtc_streamer, WebRtcMode, RTCConfiguration
+import av
+import threading
 
 st.set_page_config(
     page_title="BISINDO Translator",
@@ -297,7 +300,7 @@ if mode == "📸 Upload Foto":
         process_image(img_rgb, model, CLASS_NAMES, hand_detector)
 
 # ══════════════════════════════════════════════════════════════
-# MODE 2 — Webcam Real-time  (BAGIAN YANG DIPERBAIKI)
+# MODE 2 — Webcam Real-time dengan Timer Auto-Capture
 # ══════════════════════════════════════════════════════════════
 else:
     st.markdown("""
@@ -311,93 +314,147 @@ else:
 
     # ── Timer selector ────────────────────────────────────────
     timer_sec = st.selectbox(
-        "⏱️ Delay sebelum kamera aktif:",
+        "⏱️ Timer sebelum jepret otomatis:",
         [0, 3, 5, 10],
-        format_func=lambda x: "Langsung (tanpa timer)" if x == 0 else f"Timer {x} detik — siapkan pose dulu",
+        format_func=lambda x: "Langsung jepret (tanpa timer)" if x == 0
+                              else f"{x} detik — siapkan pose dulu",
         key="timer_select"
     )
 
-    # ── Session state untuk kontrol tampilan kamera ───────────
-    if 'show_camera' not in st.session_state:
-        st.session_state.show_camera = False
-    if 'timer_running' not in st.session_state:
-        st.session_state.timer_running = False
+    # ── Session state ─────────────────────────────────────────
+    if 'captured_frame' not in st.session_state:
+        st.session_state.captured_frame = None
+    if 'countdown_active' not in st.session_state:
+        st.session_state.countdown_active = False
+    if 'countdown_start' not in st.session_state:
+        st.session_state.countdown_start = None
+    if 'capture_done' not in st.session_state:
+        st.session_state.capture_done = False
 
-    # ── Tombol mulai ──────────────────────────────────────────
-    if timer_sec == 0:
-        # Tanpa timer: langsung tampilkan kamera
-        st.session_state.show_camera = True
-    else:
-        col_btn, col_reset = st.columns([3, 1])
-        with col_btn:
-            if st.button("📸 Mulai Timer & Persiapkan Pose", use_container_width=True,
-                         type="primary"):
-                st.session_state.show_camera = False
-                st.session_state.timer_running = True
+    # ── Shared state antar thread (webrtc callback & main thread) ─
+    # Menggunakan threading.Event dan list sebagai buffer thread-safe
+    capture_trigger  = threading.Event()   # sinyal: "capture sekarang!"
+    frame_buffer     = []                  # buffer frame terbaru dari kamera
+    frame_lock       = threading.Lock()
+
+    # ── WebRTC video processor ────────────────────────────────
+    class VideoProcessor:
+        def __init__(self):
+            self.captured_frame = None
+
+        def recv(self, frame: av.VideoFrame) -> av.VideoFrame:
+            img = frame.to_ndarray(format="bgr24")
+            img_flipped = cv2.flip(img, 1)  # mirror
+
+            # Simpan frame terbaru ke buffer (thread-safe)
+            with frame_lock:
+                frame_buffer.clear()
+                frame_buffer.append(img_flipped.copy())
+
+            # Jika ada sinyal capture → simpan ke session state
+            if capture_trigger.is_set():
+                capture_trigger.clear()
+                rgb = cv2.cvtColor(img_flipped, cv2.COLOR_BGR2RGB)
+                st.session_state.captured_frame = rgb
+                st.session_state.capture_done   = True
+
+            return av.VideoFrame.from_ndarray(img_flipped, format="bgr24")
+
+    # ── RTC Config (STUN server agar bisa jalan di cloud) ────
+    RTC_CONFIG = RTCConfiguration({
+        "iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]
+    })
+
+    # ── Render WebRTC streamer ────────────────────────────────
+    ctx = webrtc_streamer(
+        key          = "bisindo-cam",
+        mode         = WebRtcMode.SENDONLY,
+        rtc_configuration = RTC_CONFIG,
+        video_processor_factory = VideoProcessor,
+        media_stream_constraints = {
+            "video": {"width": 640, "height": 480, "facingMode": "user"},
+            "audio": False
+        },
+        async_processing = True,
+    )
+
+    # ── Tombol Mulai Timer ────────────────────────────────────
+    if ctx.state.playing:
+        col_shoot, col_reset = st.columns([3, 1])
+        with col_shoot:
+            btn_label = "📸 Jepret Sekarang" if timer_sec == 0 \
+                        else f"⏱️ Mulai Timer {timer_sec} Detik"
+            if st.button(btn_label, use_container_width=True, type="primary"):
+                st.session_state.capture_done    = False
+                st.session_state.captured_frame  = None
+                st.session_state.countdown_active = True
+                st.session_state.countdown_start  = time.time()
                 st.rerun()
+
         with col_reset:
             if st.button("🔄 Reset", use_container_width=True):
-                st.session_state.show_camera = False
-                st.session_state.timer_running = False
+                st.session_state.capture_done    = False
+                st.session_state.captured_frame  = None
+                st.session_state.countdown_active = False
+                st.session_state.countdown_start  = None
                 st.rerun()
 
-    # ── Jalankan countdown (sebelum kamera tampil) ────────────
-    if st.session_state.get('timer_running', False) and timer_sec > 0:
-        st.markdown(f"""
-        <div class="tip-card" style="border-color:#f59e0b; color:#f59e0b;
-             background:#1a1200; text-align:center; padding:1rem 1.5rem;">
-            ⏱️ <strong>Siapkan pose tangan kamu!</strong><br>
-            <span style="color:#888; font-size:0.8rem">
-                Kamera akan aktif setelah countdown selesai
+        # ── Countdown loop ────────────────────────────────────
+        if st.session_state.countdown_active and not st.session_state.capture_done:
+            elapsed   = time.time() - st.session_state.countdown_start
+            remaining = timer_sec - int(elapsed)
+
+            if timer_sec == 0 or remaining <= 0:
+                # Waktunya capture — kirim sinyal ke video processor
+                capture_trigger.set()
+                st.session_state.countdown_active = False
+
+                # Tunggu sebentar hingga frame ter-capture
+                deadline = time.time() + 2.0
+                while not st.session_state.capture_done and time.time() < deadline:
+                    time.sleep(0.05)
+
+                st.rerun()
+            else:
+                # Tampilkan countdown
+                st.markdown(f"""
+                <div class="timer-overlay">
+                    <div class="timer-count">{remaining}</div>
+                    <div class="timer-label">
+                        Siapkan gestur tangan — jepret otomatis dalam {remaining} detik...
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+                time.sleep(0.5)
+                st.rerun()
+
+    else:
+        st.markdown("""
+        <div class="warn-card">
+            🎥 <strong>Klik START di atas untuk mengaktifkan kamera.</strong><br>
+            <span style="color:#888">
+            Izinkan akses kamera di browser jika diminta.
             </span>
         </div>
         """, unsafe_allow_html=True)
 
-        timer_ph = st.empty()
-        for remaining in range(timer_sec, 0, -1):
-            timer_ph.markdown(f"""
-            <div class="timer-overlay">
-                <div class="timer-count">{remaining}</div>
-                <div class="timer-label">
-                    Siapkan gestur tangan — kamera aktif dalam {remaining} detik...
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
-            time.sleep(1)
+    # ── Tampilkan & proses hasil capture ─────────────────────
+    if st.session_state.capture_done and st.session_state.captured_frame is not None:
+        st.markdown("""
+        <div class="lm-card">
+            📸 <strong>Foto berhasil diambil!</strong> · Memproses gestur...
+        </div>
+        """, unsafe_allow_html=True)
 
-        timer_ph.empty()
-        st.session_state.timer_running = False
-        st.session_state.show_camera = True
-        st.rerun()
+        img_rgb = st.session_state.captured_frame
+        process_image(img_rgb, model, CLASS_NAMES, hand_detector)
 
-    # ── Tampilkan kamera SETELAH countdown selesai ────────────
-    if st.session_state.show_camera:
-        if timer_sec > 0:
-            st.markdown("""
-            <div class="lm-card" style="text-align:center; margin-bottom:0.5rem;">
-                📸 <strong>Kamera aktif!</strong> · Pertahankan pose, lalu klik <em>Take Photo</em>
-            </div>
-            """, unsafe_allow_html=True)
-
-        img_file = st.camera_input(
-            "Arahkan tangan ke kamera",
-            label_visibility="collapsed"
-        )
-
-        if img_file is not None:
-            # Langsung proses — tidak ada delay lagi
-            img_pil = Image.open(img_file).convert('RGB')
-            img_arr = np.array(img_pil, dtype=np.uint8)
-            img_rgb = np.ascontiguousarray(cv2.flip(img_arr, 1), dtype=np.uint8)
-            process_image(img_rgb, model, CLASS_NAMES, hand_detector)
-
-            # Reset state agar bisa foto ulang dengan timer lagi
-            if timer_sec > 0:
-                st.markdown("<br>", unsafe_allow_html=True)
-                if st.button("🔁 Ambil foto baru (ulang timer)", use_container_width=True):
-                    st.session_state.show_camera = False
-                    st.session_state.timer_running = False
-                    st.rerun()
+        # Tombol ambil ulang
+        st.markdown("<br>", unsafe_allow_html=True)
+        if st.button("🔁 Ambil foto baru", use_container_width=True):
+            st.session_state.capture_done   = False
+            st.session_state.captured_frame = None
+            st.rerun()
 
 # ══════════════════════════════════════════════════════════════
 # HISTORY
